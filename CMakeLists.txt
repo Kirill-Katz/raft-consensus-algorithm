@@ -92,19 +92,28 @@ target_include_directories(raft_proto
         "${GEN_DIR}"
 )
 
-add_executable(raft
+add_executable(raft_node
     ${RAFT_SOURCES}
     ${RAFT_HEADERS}
 )
 
-target_link_libraries(raft
+target_link_libraries(raft_node
     PRIVATE
         raft_proto
 )
 
-target_include_directories(raft
+target_include_directories(raft_node
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+add_executable(launcher
+    launcher/main.cpp
+)
+
+target_link_libraries(launcher
+    PRIVATE
+        raft_proto
 )
 
 # --- temporary for testing only ---

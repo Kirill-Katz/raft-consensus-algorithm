@@ -1,38 +1,32 @@
-#include <iostream>
 #include <memory>
-#include <string>
 
 #include <grpcpp/grpcpp.h>
+#include "raft_node.hpp"
 
-#include "hello.grpc.pb.h"
+constexpr int32_t FIRST_PORT = 50000;
 
-
-class GreeterService final : public demo::Greeter::Service {
-public:
-    grpc::Status SayHello(
-        grpc::ServerContext* context,
-        const demo::HelloRequest* request,
-        demo::HelloReply* reply
-    ) override {
-        reply->set_message("Hello, " + request->name());
-        return grpc::Status::OK;
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        std::cerr << "please provide: <id> <cluster_size>" << '\n';
+        return 1;
     }
-};
 
-int main() {
-    const std::string address = "0.0.0.0:50051";
+    uint32_t id = std::stoul(argv[1]);
+    uint32_t port = FIRST_PORT + id;
+    uint32_t cluster_size = std::stoul(argv[2]);
 
-    GreeterService service;
+    auto node = std::make_unique<RaftNode>(port, id);
+    std::vector<PeerInfo> peers;
+    for (uint32_t idx = 0; idx < cluster_size; ++idx) {
+        if (idx == id) continue;
+        peers.push_back(PeerInfo {
+            .id = idx,
+            .address = "localhost:" + std::to_string(FIRST_PORT + idx)
+        });
+    }
 
-    grpc::ServerBuilder builder;
-    builder.AddListeningPort(address, grpc::InsecureServerCredentials());
-    builder.RegisterService(&service);
-
-    std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
-
-    std::cout << "Server listening on " << address << '\n';
-
-    server->Wait();
+    node->set_other_nodes(peers);
+    node->setup_rpc_server();
 
     return 0;
 }
