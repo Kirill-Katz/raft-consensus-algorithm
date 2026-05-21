@@ -6,8 +6,6 @@ grpc::Status RaftServiceImpl::AppendEntries(
     const AppendEntriesRequest* request,
     AppendEntriesResponse* response
 ) {
-    std::cout << "Received heartbeat from " << request->leader_id() << " to " << node_.id_ << '\n';
-
     node_.last_heartbeat_ = std::chrono::steady_clock::now();
     return grpc::Status::OK;
 }

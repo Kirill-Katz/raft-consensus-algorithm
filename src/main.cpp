@@ -1,4 +1,5 @@
 #include <memory>
+#include <random>
 
 #include <grpcpp/grpcpp.h>
 #include "raft_node.hpp"
@@ -15,7 +16,14 @@ int main(int argc, char** argv) {
     uint32_t port = FIRST_PORT + id;
     uint32_t cluster_size = std::stoul(argv[2]);
 
-    auto node = std::make_unique<RaftNode>(port, id);
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    std::uniform_int_distribution<> dist(200, 300);
+
+    int timeout_ms = dist(gen);
+
+    auto node = std::make_unique<RaftNode>(port, id, timeout_ms);
     std::vector<PeerInfo> peers;
     for (uint32_t idx = 0; idx < cluster_size; ++idx) {
         if (idx == id) continue;

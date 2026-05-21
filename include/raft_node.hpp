@@ -9,6 +9,7 @@
 #include <vector>
 #include <memory>
 #include <thread>
+#include <random>
 
 #include <grpcpp/grpcpp.h>
 #include "raft.grpc.pb.h"
@@ -72,6 +73,10 @@ public:
       election_timeout_{election_timeout_ms}
     {};
 
+    uint32_t get_election_timeout_ms() {
+        return std::uniform_int_distribution<>(200, 300)(rng_);
+    }
+
     void set_other_nodes(const std::vector<PeerInfo>& peer_info) {
         peers_.clear();
 
@@ -96,6 +101,7 @@ public:
         server_ = builder.BuildAndStart();
         std::cout << "Starting raft node " << id_ << " on port " << port_ << '\n';
 
+        last_heartbeat_ = std::chrono::steady_clock::now();
         auto reply_thread = std::thread([this]() {
             reply_loop();
         });
@@ -108,6 +114,7 @@ public:
         while (true) {
             if (state_ == NodeState::LEADER) {
                 send_heartbeats();
+
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
             } else {
                 auto now = std::chrono::steady_clock::now();
@@ -125,6 +132,8 @@ public:
         current_term_++;
         voted_for_ = id_;
         votes_received_ = 1;
+        last_heartbeat_ = std::chrono::steady_clock::now();
+        election_timeout_ = std::chrono::milliseconds{get_election_timeout_ms()};
 
         for (auto& peer : peers_) {
             grpc::ClientContext context;
@@ -158,8 +167,10 @@ public:
                 votes_received_++;
             }
 
-            if (votes_received_ > peers_.size() / 2) {
+            uint32_t cluster_size = peers_.size() + 1;
+            if (votes_received_ > cluster_size / 2) {
                 state_ = NodeState::LEADER;
+                std::cout << "Node: " << id_ << " just became leader" << '\n';
                 return;
             }
         }
@@ -167,7 +178,6 @@ public:
 
     void send_heartbeats() {
         for (auto& peer : peers_) {
-            std::cout << "Sent heartbeat from " << id_ << " to " << peer.info.id << '\n';
             grpc::ClientContext context;
 
             AppendEntriesRequest request;
@@ -223,7 +233,8 @@ private:
     std::unique_ptr<grpc::Server> server_;
 
     std::chrono::steady_clock::time_point last_heartbeat_;
-    std::chrono::milliseconds election_timeout_{250};
+    std::chrono::milliseconds election_timeout_;
 
     NodeState state_ = NodeState::FOLLOWER;
+    std::mt19937 rng_{std::random_device{}()};
 };
