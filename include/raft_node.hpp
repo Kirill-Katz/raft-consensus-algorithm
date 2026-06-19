@@ -6,6 +6,7 @@
 #include <grpcpp/support/status.h>
 #include <iostream>
 #include <stdint.h>
+#include <mutex>
 #include <vector>
 #include <memory>
 #include <thread>
@@ -74,7 +75,7 @@ public:
     {};
 
     uint32_t get_election_timeout_ms() {
-        return std::uniform_int_distribution<>(200, 300)(rng_);
+        return std::uniform_int_distribution<>(800, 1600)(rng_);
     }
 
     void set_other_nodes(const std::vector<PeerInfo>& peer_info) {
@@ -98,10 +99,11 @@ public:
         builder.AddListeningPort(address_, grpc::InsecureServerCredentials());
         builder.RegisterService(&service_);
 
+        last_heartbeat_ = std::chrono::steady_clock::now();
+
         server_ = builder.BuildAndStart();
         std::cout << "Starting raft node " << id_ << " on port " << port_ << '\n';
 
-        last_heartbeat_ = std::chrono::steady_clock::now();
         auto reply_thread = std::thread([this]() {
             reply_loop();
         });
@@ -110,89 +112,9 @@ public:
         reply_thread.join();
     };
 
-    void reply_loop() {
-        while (true) {
-            if (state_ == NodeState::LEADER) {
-                send_heartbeats();
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            } else {
-                auto now = std::chrono::steady_clock::now();
-                if (now - last_heartbeat_ > election_timeout_) {
-                    start_election();
-                }
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        }
-    }
-
-    void start_election() {
-        state_ = NodeState::CANDIDATE;
-        current_term_++;
-        voted_for_ = id_;
-        votes_received_ = 1;
-        last_heartbeat_ = std::chrono::steady_clock::now();
-        election_timeout_ = std::chrono::milliseconds{get_election_timeout_ms()};
-
-        for (auto& peer : peers_) {
-            grpc::ClientContext context;
-
-            RequestVoteRequest request;
-            RequestVoteResponse response;
-
-            request.set_candidate_id(id_);
-            request.set_term(current_term_);
-            request.set_last_log_term(!log_.empty() ? log_.back().term : 0);
-            request.set_last_log_index(log_.size());
-
-            grpc::Status status = peer.stub->RequestVote(
-                &context,
-                request,
-                &response
-            );
-
-            if (!status.ok()) {
-                continue;
-            }
-
-            if (response.term() > current_term_) {
-                current_term_ = response.term();
-                state_ = NodeState::FOLLOWER;
-                voted_for_.reset();
-                return;
-            }
-
-            if (response.vote_granted()) {
-                votes_received_++;
-            }
-
-            uint32_t cluster_size = peers_.size() + 1;
-            if (votes_received_ > cluster_size / 2) {
-                state_ = NodeState::LEADER;
-                std::cout << "Node: " << id_ << " just became leader" << '\n';
-                return;
-            }
-        }
-    }
-
-    void send_heartbeats() {
-        for (auto& peer : peers_) {
-            grpc::ClientContext context;
-
-            AppendEntriesRequest request;
-            AppendEntriesResponse response;
-
-            request.set_term(current_term_);
-            request.set_leader_id(id_);
-
-            grpc::Status status = peer.stub->AppendEntries(
-                &context,
-                request,
-                &response
-            );
-        }
-    }
+    void reply_loop();
+    void start_election();
+    void send_heartbeats();
 
     std::unique_ptr<RaftService::Stub> get_peer_stub(const std::string& address) const {
         return RaftService::NewStub(
@@ -228,6 +150,7 @@ private:
     std::vector<uint32_t> match_index_;
 
     std::vector<Peer> peers_;
+    std::mutex m_;
 
     RaftServiceImpl service_;
     std::unique_ptr<grpc::Server> server_;
